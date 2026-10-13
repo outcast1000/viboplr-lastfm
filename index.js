@@ -1,0 +1,1533 @@
+// Last.fm Plugin for Vibo
+// Provides scrobbling, now playing, history import, and metadata
+
+function activate(api) {
+  var BASE_URL = "https://ws.audioscrobbler.com/2.0/";
+  var CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours in ms
+  var AUTO_IMPORT_TASK = "auto-import";
+  var AUTO_LOVED_TASK = "auto-import-loved";
+
+  var state = {
+    apiKey: null,
+    apiSecret: null,
+    sessionKey: null,
+    username: null,
+    importing: false,
+    importCancelled: false,
+    autoImportEnabled: false,
+    autoImportIntervalMins: 60,
+    lastImportAt: null,
+    importProgress: null,
+    importResult: null,
+    // Loved-tracks import (separate from scrobble-history import so their
+    // progress/result UIs never clobber each other).
+    lovedImporting: false,
+    lovedImportCancelled: false,
+    lovedImportProgress: null,
+    lovedImportResult: null,
+    // Loved-tracks auto-sync (scheduler-backed, like history auto-import).
+    // Defaults to daily — loved tracks change slowly, and the import is a
+    // newer-wins no-op for anything already applied.
+    autoLovedEnabled: false,
+    autoLovedIntervalMins: 1440,
+    lastLovedImportAt: null,
+  };
+
+  // The host added api.library.setTrackLikesBatch in a later release; gate the
+  // loved-tracks import on it so an older host just hides the feature instead of
+  // erroring (this bundled plugin's other features still work everywhere).
+  var canImportLoved = !!(api.library && typeof api.library.setTrackLikesBatch === "function");
+
+  // Deferred promise that resolves once the API key is loaded.
+  // Info-type handlers wait on this so they never fire with a missing key.
+  var _resolveApiKeyReady;
+  var apiKeyReady = new Promise(function (resolve) { _resolveApiKeyReady = resolve; });
+
+  // ===== MD5 Implementation (RFC 1321) =====
+  // Based on public-domain code by Joseph Myers
+
+  function md5(string) {
+    function md5cycle(x, k) {
+      var a = x[0], b = x[1], c = x[2], d = x[3];
+      a = ff(a, b, c, d, k[0], 7, -680876936);
+      d = ff(d, a, b, c, k[1], 12, -389564586);
+      c = ff(c, d, a, b, k[2], 17, 606105819);
+      b = ff(b, c, d, a, k[3], 22, -1044525330);
+      a = ff(a, b, c, d, k[4], 7, -176418897);
+      d = ff(d, a, b, c, k[5], 12, 1200080426);
+      c = ff(c, d, a, b, k[6], 17, -1473231341);
+      b = ff(b, c, d, a, k[7], 22, -45705983);
+      a = ff(a, b, c, d, k[8], 7, 1770035416);
+      d = ff(d, a, b, c, k[9], 12, -1958414417);
+      c = ff(c, d, a, b, k[10], 17, -42063);
+      b = ff(b, c, d, a, k[11], 22, -1990404162);
+      a = ff(a, b, c, d, k[12], 7, 1804603682);
+      d = ff(d, a, b, c, k[13], 12, -40341101);
+      c = ff(c, d, a, b, k[14], 17, -1502002290);
+      b = ff(b, c, d, a, k[15], 22, 1236535329);
+      a = gg(a, b, c, d, k[1], 5, -165796510);
+      d = gg(d, a, b, c, k[6], 9, -1069501632);
+      c = gg(c, d, a, b, k[11], 14, 643717713);
+      b = gg(b, c, d, a, k[0], 20, -373897302);
+      a = gg(a, b, c, d, k[5], 5, -701558691);
+      d = gg(d, a, b, c, k[10], 9, 38016083);
+      c = gg(c, d, a, b, k[15], 14, -660478335);
+      b = gg(b, c, d, a, k[4], 20, -405537848);
+      a = gg(a, b, c, d, k[9], 5, 568446438);
+      d = gg(d, a, b, c, k[14], 9, -1019803690);
+      c = gg(c, d, a, b, k[3], 14, -187363961);
+      b = gg(b, c, d, a, k[8], 20, 1163531501);
+      a = gg(a, b, c, d, k[13], 5, -1444681467);
+      d = gg(d, a, b, c, k[2], 9, -51403784);
+      c = gg(c, d, a, b, k[7], 14, 1735328473);
+      b = gg(b, c, d, a, k[12], 20, -1926607734);
+      a = hh(a, b, c, d, k[5], 4, -378558);
+      d = hh(d, a, b, c, k[8], 11, -2022574463);
+      c = hh(c, d, a, b, k[11], 16, 1839030562);
+      b = hh(b, c, d, a, k[14], 23, -35309556);
+      a = hh(a, b, c, d, k[1], 4, -1530992060);
+      d = hh(d, a, b, c, k[4], 11, 1272893353);
+      c = hh(c, d, a, b, k[7], 16, -155497632);
+      b = hh(b, c, d, a, k[10], 23, -1094730640);
+      a = hh(a, b, c, d, k[13], 4, 681279174);
+      d = hh(d, a, b, c, k[0], 11, -358537222);
+      c = hh(c, d, a, b, k[3], 16, -722521979);
+      b = hh(b, c, d, a, k[6], 23, 76029189);
+      a = hh(a, b, c, d, k[9], 4, -640364487);
+      d = hh(d, a, b, c, k[12], 11, -421815835);
+      c = hh(c, d, a, b, k[15], 16, 530742520);
+      b = hh(b, c, d, a, k[2], 23, -995338651);
+      a = ii(a, b, c, d, k[0], 6, -198630844);
+      d = ii(d, a, b, c, k[7], 10, 1126891415);
+      c = ii(c, d, a, b, k[14], 15, -1416354905);
+      b = ii(b, c, d, a, k[5], 21, -57434055);
+      a = ii(a, b, c, d, k[12], 6, 1700485571);
+      d = ii(d, a, b, c, k[3], 10, -1894986606);
+      c = ii(c, d, a, b, k[10], 15, -1051523);
+      b = ii(b, c, d, a, k[1], 21, -2054922799);
+      a = ii(a, b, c, d, k[8], 6, 1873313359);
+      d = ii(d, a, b, c, k[15], 10, -30611744);
+      c = ii(c, d, a, b, k[6], 15, -1560198380);
+      b = ii(b, c, d, a, k[13], 21, 1309151649);
+      a = ii(a, b, c, d, k[4], 6, -145523070);
+      d = ii(d, a, b, c, k[11], 10, -1120210379);
+      c = ii(c, d, a, b, k[2], 15, 718787259);
+      b = ii(b, c, d, a, k[9], 21, -343485551);
+      x[0] = add32(a, x[0]);
+      x[1] = add32(b, x[1]);
+      x[2] = add32(c, x[2]);
+      x[3] = add32(d, x[3]);
+    }
+    function cmn(q, a, b, x, s, t) {
+      a = add32(add32(a, q), add32(x, t));
+      return add32((a << s) | (a >>> (32 - s)), b);
+    }
+    function ff(a, b, c, d, x, s, t) { return cmn((b & c) | ((~b) & d), a, b, x, s, t); }
+    function gg(a, b, c, d, x, s, t) { return cmn((b & d) | (c & (~d)), a, b, x, s, t); }
+    function hh(a, b, c, d, x, s, t) { return cmn(b ^ c ^ d, a, b, x, s, t); }
+    function ii(a, b, c, d, x, s, t) { return cmn(c ^ (b | (~d)), a, b, x, s, t); }
+    function add32(a, b) { return (a + b) & 0xFFFFFFFF; }
+    function md5blk(s) {
+      var md5blks = [];
+      for (var i = 0; i < 64; i += 4) {
+        md5blks[i >> 2] = s.charCodeAt(i) + (s.charCodeAt(i + 1) << 8) +
+          (s.charCodeAt(i + 2) << 16) + (s.charCodeAt(i + 3) << 24);
+      }
+      return md5blks;
+    }
+    var hex_chr = "0123456789abcdef".split("");
+    function rhex(n) {
+      var s = "";
+      for (var j = 0; j < 4; j++) {
+        s += hex_chr[(n >> (j * 8 + 4)) & 0x0F] + hex_chr[(n >> (j * 8)) & 0x0F];
+      }
+      return s;
+    }
+    function hex(x) {
+      for (var i = 0; i < x.length; i++) x[i] = rhex(x[i]);
+      return x.join("");
+    }
+
+    // Convert string to UTF-8 bytes then process
+    var s = unescape(encodeURIComponent(string));
+    var n = s.length;
+    var st = [1732584193, -271733879, -1732584194, 271733878];
+    var i;
+    for (i = 64; i <= n; i += 64) {
+      md5cycle(st, md5blk(s.substring(i - 64, i)));
+    }
+    s = s.substring(i - 64);
+    var tail = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    for (i = 0; i < s.length; i++) {
+      tail[i >> 2] |= s.charCodeAt(i) << ((i % 4) << 3);
+    }
+    tail[i >> 2] |= 0x80 << ((i % 4) << 3);
+    if (i > 55) {
+      md5cycle(st, tail);
+      for (i = 0; i < 16; i++) tail[i] = 0;
+    }
+    tail[14] = n * 8;
+    md5cycle(st, tail);
+    return hex(st);
+  }
+
+  // ===== API Signing =====
+
+  function signParams(params) {
+    params.sort(function (a, b) { return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0; });
+    var sigInput = "";
+    for (var i = 0; i < params.length; i++) {
+      sigInput += params[i][0] + params[i][1];
+    }
+    sigInput += state.apiSecret;
+    return md5(sigInput);
+  }
+
+  // ===== HTTP Helpers =====
+
+  function lastfmGet(method, params) {
+    return apiKeyReady.then(function () {
+      if (!state.apiKey) throw new Error("Last.fm API key not available");
+      var query = "method=" + encodeURIComponent(method)
+        + "&api_key=" + encodeURIComponent(state.apiKey)
+        + "&format=json";
+      if (params) {
+        for (var i = 0; i < params.length; i++) {
+          query += "&" + encodeURIComponent(params[i][0]) + "=" + encodeURIComponent(params[i][1]);
+        }
+      }
+      return api.network.fetch(BASE_URL + "?" + query).then(function (resp) {
+        return resp.json();
+      }).then(function (data) {
+        if (data.error) {
+          throw new Error("Last.fm error " + data.error + ": " + (data.message || "Unknown"));
+        }
+        return data;
+      });
+    });
+  }
+
+  function lastfmSignedPost(method, extra) {
+    var params = [
+      ["method", method],
+      ["api_key", state.apiKey],
+      ["sk", state.sessionKey],
+    ];
+    if (extra) {
+      for (var i = 0; i < extra.length; i++) {
+        params.push(extra[i]);
+      }
+    }
+    var sig = signParams(params);
+    // Build form body
+    var body = "";
+    for (var j = 0; j < params.length; j++) {
+      if (body) body += "&";
+      body += encodeURIComponent(params[j][0]) + "=" + encodeURIComponent(params[j][1]);
+    }
+    body += "&api_sig=" + encodeURIComponent(sig) + "&format=json";
+    return api.network.fetch(BASE_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body,
+    }).then(function (resp) {
+      return resp.json();
+    }).then(function (data) {
+      if (data.error) {
+        if (data.error === 9 || data.error === 14) {
+          console.warn("[lastfm] Auth error, disconnecting");
+          disconnect();
+          renderSettings();
+        }
+        throw new Error("Last.fm error " + data.error + ": " + (data.message || "Unknown"));
+      }
+      return data;
+    });
+  }
+
+  // ===== Caching =====
+
+  function cacheGet(key) {
+    return api.storage.get("cache:" + key).then(function (entry) {
+      if (!entry) return null;
+      if (Date.now() - entry.ts > CACHE_TTL) {
+        api.storage.delete("cache:" + key);
+        return null;
+      }
+      return entry.value;
+    });
+  }
+
+  function cacheSet(key, value) {
+    return api.storage.set("cache:" + key, { ts: Date.now(), value: value });
+  }
+
+  function cacheDeletePrefix(prefix) {
+    // Plugin storage doesn't support prefix deletion, so we track known keys
+    // and delete individually. For now, just delete the specific key.
+    return api.storage.delete("cache:" + prefix);
+  }
+
+  // ===== Auth Flow =====
+
+  function startAuth() {
+    var url = "https://www.last.fm/api/auth/?api_key=" + encodeURIComponent(state.apiKey)
+      + "&cb=" + encodeURIComponent("viboplr://lastfm-callback");
+    api.network.openUrl(url);
+  }
+
+  function handleAuthCallback(token) {
+    var params = [
+      ["method", "auth.getSession"],
+      ["api_key", state.apiKey],
+      ["token", token],
+    ];
+    var sig = signParams(params);
+    var query = "method=auth.getSession"
+      + "&api_key=" + encodeURIComponent(state.apiKey)
+      + "&token=" + encodeURIComponent(token)
+      + "&api_sig=" + encodeURIComponent(sig)
+      + "&format=json";
+    return api.network.fetch(BASE_URL + "?" + query).then(function (resp) {
+      return resp.json();
+    }).then(function (data) {
+      if (data.error) {
+        throw new Error("Last.fm auth error: " + (data.message || "Unknown"));
+      }
+      if (!data.session || !data.session.key || !data.session.name) {
+        throw new Error("Invalid session response");
+      }
+      state.sessionKey = data.session.key;
+      state.username = data.session.name;
+      return api.storage.set("lastfm_session", {
+        sessionKey: state.sessionKey,
+        username: state.username,
+      });
+    }).then(function () {
+      console.log("[lastfm] Authenticated as", state.username);
+      renderSettings();
+    }).catch(function (err) {
+      console.error("[lastfm] Auth failed:", err);
+      renderSettings();
+    });
+  }
+
+  function disconnect() {
+    state.sessionKey = null;
+    state.username = null;
+    stopAutoImport();
+    api.storage.delete("lastfm_session");
+    api.storage.delete("lastfm_auto_import");
+  }
+
+  // Deep link handler
+  api.network.onDeepLink(function (url) {
+    if (url.indexOf("viboplr://lastfm-callback") !== 0) return;
+    var qIndex = url.indexOf("?");
+    if (qIndex === -1) return;
+    var params = new URLSearchParams(url.substring(qIndex + 1));
+    var token = params.get("token");
+    if (token) {
+      handleAuthCallback(token);
+    }
+  });
+
+  // ===== Playback Hooks =====
+
+  api.playback.onTrackStarted(function (track) {
+    if (!state.sessionKey || !track) return;
+    var artist = track.artist_name;
+    var title = track.title;
+    if (!artist || !title) return;
+    var extra = [["artist", artist], ["track", title]];
+    if (track.album_title) extra.push(["album", track.album_title]);
+    if (track.duration_secs) extra.push(["duration", String(Math.round(track.duration_secs))]);
+    lastfmSignedPost("track.updateNowPlaying", extra).catch(function (err) {
+      console.warn("[lastfm] now_playing error:", err.message);
+    });
+  });
+
+  // The returned report is the status line under Last.fm in Settings →
+  // Scrobbling (older hosts ignore it).
+  api.playback.onTrackScrobbled(function (track) {
+    if (!track) return;
+    if (!state.sessionKey) return { status: "skipped", message: "Connect Last.fm in its settings to scrobble" };
+    var artist = track.artist_name;
+    var title = track.title;
+    if (!artist || !title) return { status: "skipped", message: "Last.fm needs an artist and a title" };
+    var ts = String(Math.floor(Date.now() / 1000));
+    var extra = [["artist", artist], ["track", title], ["timestamp", ts]];
+    if (track.album_title) extra.push(["album", track.album_title]);
+    if (track.duration_secs) extra.push(["duration", String(Math.round(track.duration_secs))]);
+    return lastfmSignedPost("track.scrobble", extra).then(function (data) {
+      // Last.fm answers 200 for a scrobble it ignored (bad timestamp, a
+      // filtered artist…), with the reason inside.
+      var attr = data && data.scrobbles && data.scrobbles["@attr"];
+      if (attr && Number(attr.ignored) > 0) {
+        var ignored = data.scrobbles.scrobble && data.scrobbles.scrobble.ignoredMessage;
+        var reason = ignored && ignored["#text"];
+        return { status: "skipped", message: "Last.fm ignored it" + (reason ? ": " + reason : "") };
+      }
+      return { status: "sent" };
+    }, function (err) {
+      console.warn("[lastfm] scrobble error:", err.message);
+      return { status: "failed", message: err.message };
+    });
+  });
+
+  // Love / unlove follows the rating change itself (like:changed): becoming
+  // liked is a love, leaving liked — to neutral OR to disliked, which is the
+  // single like button's next step — is an unlove; neutral ↔ disliked means
+  // nothing on Last.fm. Bulk imports (the loved-tracks import below) send no
+  // change, so they are never echoed back.
+  api.library.onLikeChanged(function (change) {
+    if (!state.sessionKey || !change || change.kind !== "track") return;
+    var artist = change.artistName;
+    var title = change.name;
+    if (!artist || !title) return;
+    var method = change.liked === 1 && change.previous !== 1 ? "track.love"
+      : change.liked !== 1 && change.previous === 1 ? "track.unlove"
+      : null;
+    if (!method) return;
+    lastfmSignedPost(method, [["artist", artist], ["track", title]]).catch(function (err) {
+      console.warn("[lastfm] " + method + " error:", err.message);
+    });
+  });
+
+  // ===== Play the Full Album (track context menu) =====
+  //
+  // Replaces the queue with the clicked track's whole album, in Last.fm's
+  // tracklist order. The entries are metadata-only PluginTracks: the host's
+  // stream-resolver chain finds each one on play (the Library resolver first,
+  // so a locally-owned album plays from disk). A track with no album tag
+  // (a queue/search entry) is placed on its album via track.getInfo.
+
+  function lastfmImageUrl(images) {
+    if (!Array.isArray(images)) return undefined;
+    for (var i = images.length - 1; i >= 0; i--) {
+      if (images[i] && images[i]["#text"]) return images[i]["#text"];
+    }
+    return undefined;
+  }
+
+  function resolveAlbumName(artistName, title, albumTitle) {
+    if (albumTitle) return Promise.resolve(albumTitle);
+    if (!title) return Promise.resolve(null);
+    return fetchTrackInfo(artistName, title).then(function (data) {
+      return (data && data.track && data.track.album && data.track.album.title) || null;
+    });
+  }
+
+  api.contextMenu.onAction("play-full-album", function (target) {
+    var artistName = target && target.artistName;
+    if (!artistName) {
+      api.ui.showNotification("Play the Full Album: this track has no artist");
+      return;
+    }
+    resolveAlbumName(artistName, target.title, target.albumTitle).then(function (albumName) {
+      if (!albumName) throw new Error("no-album");
+      return fetchAlbumInfo(artistName, albumName);
+    }).then(function (data) {
+      var album = data && data.album;
+      var list = album && album.tracks && album.tracks.track;
+      if (!list) throw new Error("no-tracks");
+      if (!Array.isArray(list)) list = [list];
+      if (list.length === 0) throw new Error("no-tracks");
+      var albumTitle = album.name;
+      var albumArtist = album.artist || artistName;
+      var cover = lastfmImageUrl(album.image);
+      var tracks = [];
+      for (var i = 0; i < list.length; i++) {
+        var t = list[i];
+        var rank = t["@attr"] && parseInt(t["@attr"].rank, 10);
+        var duration = parseInt(t.duration || "0", 10);
+        tracks.push({
+          title: t.name,
+          artist_name: (t.artist && t.artist.name) || albumArtist,
+          album_title: albumTitle,
+          track_number: rank || i + 1,
+          duration_secs: duration > 0 ? duration : undefined,
+          image_url: cover,
+        });
+      }
+      api.playback.playTracks(tracks, 0, { name: albumTitle, coverUrl: cover, source: "album", metadata: { artist: albumArtist } });
+    }).catch(function (err) {
+      var notFound = err && (err.message === "no-album" || err.message === "no-tracks");
+      if (!notFound) console.error("[lastfm] Failed to load album tracklist:", err);
+      api.ui.showNotification(notFound
+        ? "Play the Full Album: Last.fm has no tracklist for this album"
+        : "Play the Full Album: couldn't reach Last.fm");
+    });
+  });
+
+  // Compact count for one-line surfaces ("10.4k", "2.2M") — mirrors the host's
+  // formatCompactCount (src/utils/formatCount.ts) so this plugin's own text
+  // (the Now Playing item) reads the same as the host-rendered title-line
+  // numbers. The 0.9995 gate promotes a value that would round into the next
+  // tier ("999,700" → "1M", never "1000k").
+  function compactCount(n) {
+    if (!isFinite(n) || n <= 0) return "0";
+    var tiers = [[1e9, "B"], [1e6, "M"], [1e3, "k"]];
+    for (var i = 0; i < tiers.length; i++) {
+      var scaled = n / tiers[i][0];
+      if (scaled < 0.9995) continue;
+      var digits = scaled >= 99.95 ? 0 : 1;
+      return scaled.toFixed(digits).replace(/\.0$/, "") + tiers[i][1];
+    }
+    return String(Math.round(n));
+  }
+
+  // Average scrobbles per listener ("12.3") — the engagement signal the two
+  // raw totals only imply. Null when either side is missing.
+  function perListener(plays, listeners) {
+    if (!(plays > 0) || !(listeners > 0)) return null;
+    var avg = plays / listeners;
+    return avg >= 99.95 ? String(Math.round(avg)) : avg.toFixed(1).replace(/\.0$/, "");
+  }
+
+  // ===== Now Playing Info =====
+  // Contributes a single "Listeners" item to the cycling now-playing section:
+  // the track's Last.fm listener count plus the plays-per-listener average.
+  // The raw playcount is deliberately not shown — the average carries it, and
+  // the app names Last.fm playcounts "plays" everywhere, never "scrobbles"
+  // ("scrobbling" stays the name of the act only).
+  // Reads from the same cached track.getInfo response the track detail page
+  // uses, so the numbers match exactly between the two surfaces.
+  // The item id stays "scrobbles": users' persisted selection/order key on it.
+  api.nowPlayingInfo.registerItem({ id: "scrobbles", label: "Listeners (Last.fm)", priority: 100, defaultEnabled: true });
+  api.nowPlayingInfo.onFetch("scrobbles", function (track) {
+    var artistName = track && track.artist_name;
+    var title = track && track.title;
+    if (!artistName || !title) return Promise.resolve({ status: "empty" });
+    return fetchTrackInfo(artistName, title).then(function (data) {
+      if (!data || !data.track) return { status: "empty" };
+      var t = data.track;
+      var parts = [];
+      var plays = Number(t.playcount || 0);
+      var listeners = Number(t.listeners || 0);
+      if (listeners > 0) parts.push(compactCount(listeners) + " listeners");
+      var avg = perListener(plays, listeners);
+      if (avg) parts.push(avg + " plays / listener");
+      if (parts.length === 0) return { status: "empty" };
+      return { status: "ok", text: parts.join(" · ") };
+    }).catch(function (err) {
+      console.error("[lastfm] now-playing listeners error:", err && err.message);
+      return { status: "error" };
+    });
+  });
+
+  // ===== Information Types =====
+
+  var stripReadMore = function (html) {
+    return (html || "")
+      .replace(/<a [^>]*>Read more on Last\.fm<\/a>\.?\s*/gi, "")
+      .replace(/User-contributed text is available under the Creative Commons[^.]*\.\s*(additional terms may apply\.)?\s*/gi, "")
+      .trim();
+  };
+
+  // Read-through cache with single-flight.
+  //
+  // The cache alone is not enough, and the gap was visible on every track
+  // change: several information types and Now Playing items ask for the same
+  // `*.getInfo` at once, all miss (nothing is written yet), and all fetch. One
+  // track change produced three byte-identical `track.getInfo` requests. Keying
+  // the in-flight promise by the same cache key collapses them into one call
+  // whose result every caller shares.
+  var inFlightInfo = Object.create(null);
+
+  function cachedInfo(cacheKey, fetcher) {
+    var pending = inFlightInfo[cacheKey];
+    if (pending) return pending;
+    var run = cacheGet(cacheKey).then(function (cached) {
+      if (cached) return cached;
+      return fetcher().then(function (data) {
+        cacheSet(cacheKey, data);
+        return data;
+      });
+    });
+    inFlightInfo[cacheKey] = run;
+    // Clear on settle either way: a cached rejection would make one transient
+    // network failure permanent for the rest of the session.
+    var forget = function () { delete inFlightInfo[cacheKey]; };
+    run.then(forget, forget);
+    return run;
+  }
+
+  function fetchArtistInfo(artistName) {
+    var cacheKey = "artist_info:" + artistName.toLowerCase();
+    return cachedInfo(cacheKey, function () {
+      return lastfmGet("artist.getInfo", [["artist", artistName], ["autocorrect", "1"]]);
+    });
+  }
+
+  function fetchAlbumInfo(artistName, albumName) {
+    var cacheKey = "album_info:" + artistName.toLowerCase() + ":" + albumName.toLowerCase();
+    return cachedInfo(cacheKey, function () {
+      return lastfmGet("album.getInfo", [["artist", artistName], ["album", albumName], ["autocorrect", "1"]]);
+    });
+  }
+
+  // Shared track.getInfo fetch. The cache key matches the one used by the
+  // `track_info` information type so the detail page and the Now Playing info
+  // items read the same cached response (and report the same numbers).
+  function fetchTrackInfo(artistName, title) {
+    var cacheKey = "track_info:" + artistName.toLowerCase() + ":" + title.toLowerCase();
+    return cachedInfo(cacheKey, function () {
+      return lastfmGet("track.getInfo", [["artist", artistName], ["track", title], ["autocorrect", "1"]]);
+    });
+  }
+
+  // --- Artist info types ---
+
+  api.informationTypes.onFetch("artist_bio", function (entity) {
+    if (entity.kind !== "artist") return Promise.resolve({ status: "not_found" });
+    return fetchArtistInfo(entity.name).then(function (data) {
+      if (!data || !data.artist || !data.artist.bio || !data.artist.bio.summary) {
+        return { status: "not_found" };
+      }
+      var artistUrl = (data.artist.url) || ("https://www.last.fm/music/" + encodeURIComponent(entity.name));
+      return {
+        status: "ok",
+        value: {
+          summary: stripReadMore(data.artist.bio.summary),
+          full: stripReadMore(data.artist.bio.content) || undefined,
+          _meta: { url: artistUrl, providerName: "Last.fm" },
+        },
+      };
+    }).catch(function () { return { status: "error" }; });
+  });
+
+  api.informationTypes.onFetch("artist_stats", function (entity) {
+    if (entity.kind !== "artist") return Promise.resolve({ status: "not_found" });
+    return fetchArtistInfo(entity.name).then(function (data) {
+      if (!data || !data.artist || !data.artist.stats) return { status: "not_found" };
+      var items = [];
+      if (data.artist.stats.listeners) items.push({ label: "listeners", value: Number(data.artist.stats.listeners) });
+      // Listeners + the plays-per-listener average — the raw playcount is
+      // deliberately not an item (the average carries it). Pre-formatted
+      // string, so the host renders it verbatim ("78.1 plays / listener")
+      // instead of compacting it like the raw counts.
+      var artistAvg = perListener(Number(data.artist.stats.playcount || 0), Number(data.artist.stats.listeners || 0));
+      if (artistAvg) items.push({ label: "plays / listener", value: artistAvg });
+      if (items.length === 0) return { status: "not_found" };
+      return { status: "ok", value: { items: items, _meta: { providerName: "Last.fm", homepageUrl: "https://www.last.fm" } } };
+    }).catch(function () { return { status: "error" }; });
+  });
+
+  api.informationTypes.onFetch("similar_artists", function (entity) {
+    if (entity.kind !== "artist") return Promise.resolve({ status: "not_found" });
+    var cacheKey = "similar_artists:" + entity.name.toLowerCase();
+    return cacheGet(cacheKey).then(function (cached) {
+      if (cached) return cached;
+      return lastfmGet("artist.getSimilar", [["artist", entity.name], ["autocorrect", "1"], ["limit", "20"]]).then(function (data) {
+        cacheSet(cacheKey, data);
+        return data;
+      });
+    }).then(function (data) {
+      if (!data || !data.similarartists || !data.similarartists.artist) return { status: "not_found" };
+      var list = Array.isArray(data.similarartists.artist) ? data.similarartists.artist : [data.similarartists.artist];
+      if (list.length === 0) return { status: "not_found" };
+      var items = [];
+      for (var i = 0; i < list.length; i++) {
+        var sa = list[i];
+        items.push({
+          name: sa.name,
+          match: parseFloat(sa.match || "0"),
+          libraryKind: "artist",
+        });
+      }
+      var artistUrl = "https://www.last.fm/music/" + encodeURIComponent(entity.name);
+      return { status: "ok", value: { items: items, _meta: { url: artistUrl + "/+similar", providerName: "Last.fm" } } };
+    }).catch(function () { return { status: "error" }; });
+  });
+
+  api.informationTypes.onFetch("artist_top_tracks", function (entity) {
+    if (entity.kind !== "artist") return Promise.resolve({ status: "not_found" });
+    var cacheKey = "artist_top_tracks:" + entity.name.toLowerCase();
+    return cacheGet(cacheKey).then(function (cached) {
+      if (cached) return cached;
+      return lastfmGet("artist.getTopTracks", [["artist", entity.name], ["autocorrect", "1"], ["limit", "50"]]).then(function (data) {
+        cacheSet(cacheKey, data);
+        return data;
+      });
+    }).then(function (data) {
+      if (!data || !data.toptracks || !data.toptracks.track) return { status: "not_found" };
+      var tracks = Array.isArray(data.toptracks.track) ? data.toptracks.track : [data.toptracks.track];
+      if (tracks.length === 0) return { status: "not_found" };
+      var items = [];
+      for (var i = 0; i < tracks.length; i++) {
+        items.push({
+          name: tracks[i].name,
+          value: parseInt(tracks[i].listeners || tracks[i].playcount || "0", 10),
+          libraryKind: "track",
+        });
+      }
+      return { status: "ok", value: { items: items, _meta: { url: "https://www.last.fm/music/" + encodeURIComponent(entity.name) + "/+tracks", providerName: "Last.fm" } } };
+    }).catch(function () { return { status: "error" }; });
+  });
+
+  // --- Album info types ---
+
+  api.informationTypes.onFetch("album_wiki", function (entity) {
+    if (entity.kind !== "album") return Promise.resolve({ status: "not_found" });
+    var artistName = entity.artistName || "";
+    if (!artistName) return Promise.resolve({ status: "not_found" });
+    return fetchAlbumInfo(artistName, entity.name).then(function (data) {
+      if (!data || !data.album || !data.album.wiki || !data.album.wiki.summary) return { status: "not_found" };
+      var albumUrl = (data.album.url) || ("https://www.last.fm/music/" + encodeURIComponent(artistName) + "/" + encodeURIComponent(entity.name));
+      return {
+        status: "ok",
+        value: {
+          summary: stripReadMore(data.album.wiki.summary),
+          full: stripReadMore(data.album.wiki.content) || undefined,
+          _meta: { url: albumUrl, providerName: "Last.fm" },
+        },
+      };
+    }).catch(function () { return { status: "error" }; });
+  });
+
+  api.informationTypes.onFetch("album_track_popularity", function (entity) {
+    if (entity.kind !== "album") return Promise.resolve({ status: "not_found" });
+    var artistName = entity.artistName || "";
+    if (!artistName) return Promise.resolve({ status: "not_found" });
+    // album.getInfo doesn't include per-track listeners, so we need to
+    // fetch track.getInfo for each track individually
+    var popCacheKey = "album_track_pop:" + artistName.toLowerCase() + ":" + entity.name.toLowerCase();
+    return cacheGet(popCacheKey).then(function (cached) {
+      if (cached) return cached;
+      return fetchAlbumInfo(artistName, entity.name).then(function (data) {
+        if (!data || !data.album || !data.album.tracks || !data.album.tracks.track) return null;
+        var tracks = Array.isArray(data.album.tracks.track) ? data.album.tracks.track : [data.album.tracks.track];
+        if (tracks.length === 0) return null;
+        var fetches = [];
+        for (var i = 0; i < tracks.length; i++) {
+          (function (trackName) {
+            fetches.push(
+              lastfmGet("track.getInfo", [["artist", artistName], ["track", trackName], ["autocorrect", "1"]])
+                .then(function (info) {
+                  var listeners = parseInt((info.track && info.track.listeners) || "0", 10);
+                  return { name: trackName, listeners: listeners };
+                })
+                .catch(function () { return { name: trackName, listeners: 0 }; })
+            );
+          })(tracks[i].name);
+        }
+        return Promise.all(fetches).then(function (results) {
+          cacheSet(popCacheKey, results);
+          return results;
+        });
+      });
+    }).then(function (results) {
+      if (!results) return { status: "not_found" };
+      var items = [];
+      for (var i = 0; i < results.length; i++) {
+        items.push({ name: results[i].name, subtitle: artistName, value: results[i].listeners, libraryKind: "track" });
+      }
+      var albumUrl = "https://www.last.fm/music/" + encodeURIComponent(entity.artistName) + "/" + encodeURIComponent(entity.name);
+      return { status: "ok", value: { items: items, _meta: { url: albumUrl, providerName: "Last.fm" } } };
+    }).catch(function () { return { status: "error" }; });
+  });
+
+  // --- Track info types ---
+
+  api.informationTypes.onFetch("track_info", function (entity) {
+    if (entity.kind !== "track") return Promise.resolve({ status: "not_found" });
+    var artistName = entity.artistName || "";
+    if (!artistName) return Promise.resolve({ status: "not_found" });
+    return fetchTrackInfo(artistName, entity.name).then(function (data) {
+      if (!data || !data.track) return { status: "not_found" };
+      var t = data.track;
+      var items = [];
+      if (t.listeners) items.push({ label: "listeners", value: Number(t.listeners) });
+      // Listeners + average only, no raw playcount — see artist_stats. (The
+      // track detail page renders its own line from these same items.)
+      var trackAvg = perListener(Number(t.playcount || 0), Number(t.listeners || 0));
+      if (trackAvg) items.push({ label: "plays / listener", value: trackAvg });
+      if (items.length === 0) return { status: "not_found" };
+      var trackUrl = t.url || ("https://www.last.fm/music/" + encodeURIComponent(artistName) + "/_/" + encodeURIComponent(entity.name));
+      return {
+        status: "ok",
+        value: {
+          items: items,
+          toptags: (t.toptags && t.toptags.tag) ? (Array.isArray(t.toptags.tag) ? t.toptags.tag : [t.toptags.tag]) : [],
+          url: trackUrl,
+          _meta: { url: trackUrl, providerName: "Last.fm" },
+        },
+      };
+    }).catch(function () { return { status: "error" }; });
+  });
+
+  api.informationTypes.onFetch("track_tags", function (entity) {
+    if (entity.kind !== "track") return Promise.resolve({ status: "not_found" });
+    var artistName = entity.artistName || "";
+    if (!artistName) return Promise.resolve({ status: "not_found" });
+    var trackCacheKey = "track_tags:" + artistName.toLowerCase() + ":" + entity.name.toLowerCase();
+    var artistCacheKey = "artist_tags:" + artistName.toLowerCase();
+
+    var trackTagsP = cacheGet(trackCacheKey).then(function (cached) {
+      if (cached) return cached;
+      return lastfmGet("track.getTopTags", [["artist", artistName], ["track", entity.name], ["autocorrect", "1"]]).then(function (data) {
+        cacheSet(trackCacheKey, data);
+        return data;
+      });
+    });
+
+    var artistTagsP = cacheGet(artistCacheKey).then(function (cached) {
+      if (cached) return cached;
+      return lastfmGet("artist.getTopTags", [["artist", artistName], ["autocorrect", "1"]]).then(function (data) {
+        cacheSet(artistCacheKey, data);
+        return data;
+      });
+    });
+
+    return Promise.all([trackTagsP, artistTagsP]).then(function (results) {
+      var trackData = results[0];
+      var artistData = results[1];
+      var tags = [];
+      var artistTags = [];
+      if (trackData && trackData.toptags && trackData.toptags.tag) {
+        var tt = Array.isArray(trackData.toptags.tag) ? trackData.toptags.tag : [trackData.toptags.tag];
+        for (var i = 0; i < tt.length; i++) {
+          if (tt[i].name) tags.push({ name: tt[i].name, url: tt[i].url });
+        }
+      }
+      if (artistData && artistData.toptags && artistData.toptags.tag) {
+        var at = Array.isArray(artistData.toptags.tag) ? artistData.toptags.tag : [artistData.toptags.tag];
+        for (var j = 0; j < at.length; j++) {
+          if (at[j].name) artistTags.push({ name: at[j].name, url: at[j].url });
+        }
+      }
+      if (tags.length === 0 && artistTags.length === 0) return { status: "not_found" };
+      return { status: "ok", value: { tags: tags, artistTags: artistTags, suggestable: true, _meta: { providerName: "Last.fm", homepageUrl: "https://www.last.fm" } } };
+    }).catch(function () { return { status: "error" }; });
+  });
+
+  api.informationTypes.onFetch("similar_tracks", function (entity) {
+    if (entity.kind !== "track") return Promise.resolve({ status: "not_found" });
+    var artistName = entity.artistName || "";
+    if (!artistName) return Promise.resolve({ status: "not_found" });
+    var cacheKey = "similar_tracks:" + artistName.toLowerCase() + ":" + entity.name.toLowerCase();
+    return cacheGet(cacheKey).then(function (cached) {
+      if (cached) return cached;
+      return lastfmGet("track.getSimilar", [["artist", artistName], ["track", entity.name], ["autocorrect", "1"], ["limit", "20"]]).then(function (data) {
+        cacheSet(cacheKey, data);
+        return data;
+      });
+    }).then(function (data) {
+      if (!data || !data.similartracks || !data.similartracks.track) return { status: "not_found" };
+      var tracks = Array.isArray(data.similartracks.track) ? data.similartracks.track : [data.similartracks.track];
+      if (tracks.length === 0) return { status: "not_found" };
+      var items = [];
+      for (var i = 0; i < tracks.length; i++) {
+        var st = tracks[i];
+        var artist = (st.artist && (st.artist.name || st.artist["#text"])) || "";
+        items.push({
+          name: st.name,
+          subtitle: artist,
+          value: Math.round(parseFloat(st.match || "0") * 100),
+          libraryKind: "track",
+        });
+      }
+      return { status: "ok", value: { items: items, _meta: { providerName: "Last.fm", homepageUrl: "https://www.last.fm" } } };
+    }).catch(function () { return { status: "error" }; });
+  });
+
+  // ===== Assistant tools (api.assistant) =====
+  // The ACCOUNT half of Last.fm — cross-device scrobbles and personal charts
+  // the local database can never know. The public-data half (bios, similar,
+  // top tracks) stays on the info types above, reachable via /v1/info/fetch.
+  // Never return the session key or api secret from a tool.
+
+  if (api.assistant) {
+    api.assistant.onTool("account_status", async function () {
+      return {
+        connected: !!state.sessionKey,
+        username: state.username || null,
+      };
+    });
+
+    api.assistant.onTool("recent_scrobbles", async function (args) {
+      if (!state.username) throw new Error("Last.fm is not connected (Settings → Last.fm)");
+      var limit = Math.min(200, Math.max(1, parseInt(args.limit, 10) || 20));
+      var data = await lastfmGet("user.getRecentTracks", [
+        ["user", state.username],
+        ["limit", String(limit)],
+      ]);
+      var raw = (data.recenttracks && data.recenttracks.track) || [];
+      var tracks = Array.isArray(raw) ? raw : [raw];
+      return {
+        tracks: tracks.map(function (t) {
+          return {
+            title: t.name,
+            artist: (t.artist && (t.artist.name || t.artist["#text"])) || null,
+            album: (t.album && t.album["#text"]) || null,
+            nowPlaying: !!(t["@attr"] && t["@attr"].nowplaying),
+            playedAt: t.date ? parseInt(t.date.uts, 10) : null,
+          };
+        }),
+      };
+    });
+
+    api.assistant.onTool("top_charts", async function (args) {
+      if (!state.username) throw new Error("Last.fm is not connected (Settings → Last.fm)");
+      var kind = args.kind;
+      var methods = {
+        artists: ["user.getTopArtists", "topartists", "artist"],
+        albums: ["user.getTopAlbums", "topalbums", "album"],
+        tracks: ["user.getTopTracks", "toptracks", "track"],
+      };
+      var m = methods[kind];
+      if (!m) throw new Error('"kind" must be "artists", "albums" or "tracks"');
+      var periods = ["overall", "7day", "1month", "3month", "6month", "12month"];
+      var period = args.period || "overall";
+      if (periods.indexOf(period) === -1) {
+        throw new Error('"period" must be one of: ' + periods.join(", "));
+      }
+      var limit = Math.min(200, Math.max(1, parseInt(args.limit, 10) || 25));
+      var data = await lastfmGet(m[0], [
+        ["user", state.username],
+        ["period", period],
+        ["limit", String(limit)],
+      ]);
+      var container = data[m[1]] || {};
+      var raw = container[m[2]] || [];
+      var rows = Array.isArray(raw) ? raw : [raw];
+      return {
+        period: period,
+        items: rows.map(function (r) {
+          return {
+            rank: r["@attr"] ? parseInt(r["@attr"].rank, 10) : null,
+            name: r.name,
+            artist: (r.artist && (r.artist.name || r.artist["#text"])) || null,
+            playCount: parseInt(r.playcount, 10) || 0,
+          };
+        }),
+      };
+    });
+  }
+
+  // ===== History Import =====
+
+  function importHistory(fromTs) {
+    if (state.importing || !state.sessionKey || !state.username) return;
+    state.importing = true;
+    state.importCancelled = false;
+    state.importProgress = null;
+    state.importResult = null;
+    renderSettings();
+
+    var username = state.username;
+    var totalImported = 0;
+    var totalSkipped = 0;
+
+    function fetchPage(page, totalPages) {
+      if (state.importCancelled) {
+        finishImport(totalImported, totalSkipped);
+        return;
+      }
+
+      var params = [
+        ["user", username],
+        ["page", String(page)],
+        ["limit", "200"],
+      ];
+      if (fromTs) {
+        params.push(["from", String(fromTs)]);
+      }
+
+      lastfmGet("user.getRecentTracks", params).then(function (data) {
+        var rt = data.recenttracks;
+        if (!rt || !rt.track) {
+          finishImport(totalImported, totalSkipped);
+          return;
+        }
+
+        var attr = rt["@attr"] || {};
+        var tp = parseInt(attr.totalPages || "1", 10);
+        if (totalPages === null) totalPages = tp;
+
+        // Extract plays
+        var tracks = Array.isArray(rt.track) ? rt.track : [rt.track];
+        var plays = [];
+        for (var i = 0; i < tracks.length; i++) {
+          var t = tracks[i];
+          // Skip "now playing" entries (no date)
+          if (t["@attr"] && t["@attr"].nowplaying === "true") continue;
+          if (!t.date || !t.date.uts) continue;
+          var artist = (t.artist && (t.artist["#text"] || t.artist.name)) || "";
+          var name = t.name || "";
+          var playedAt = parseInt(t.date.uts, 10);
+          if (artist && name && playedAt) {
+            plays.push({ artist: artist, track: name, playedAt: playedAt });
+          }
+        }
+
+        if (plays.length === 0) {
+          finishImport(totalImported, totalSkipped);
+          return;
+        }
+
+        return api.library.recordHistoryPlaysBatch(plays).then(function (result) {
+          totalImported += result.imported;
+          totalSkipped += result.skipped;
+
+          state.importProgress = {
+            page: page,
+            total_pages: totalPages,
+            imported: totalImported,
+            skipped: totalSkipped,
+          };
+          renderSettings();
+
+          if (page < totalPages) {
+            // Rate limit: 200ms between pages
+            setTimeout(function () {
+              fetchPage(page + 1, totalPages);
+            }, 200);
+          } else {
+            finishImport(totalImported, totalSkipped);
+          }
+        });
+      }).catch(function (err) {
+        console.error("[lastfm] import error:", err);
+        state.importing = false;
+        state.importProgress = null;
+        renderSettings();
+      });
+    }
+
+    function finishImport(imported, skipped) {
+      state.importing = false;
+      state.importProgress = null;
+      state.importResult = { imported: imported, skipped: skipped };
+      state.lastImportAt = Math.floor(Date.now() / 1000);
+      api.storage.set("lastfm_auto_import", {
+        enabled: state.autoImportEnabled,
+        intervalMins: state.autoImportIntervalMins,
+        lastImportAt: state.lastImportAt,
+      });
+      // Advance the scheduler's last_run so the next auto-import waits a full
+      // interval. Harmless no-op if the task isn't registered (manual import).
+      api.scheduler.complete(AUTO_IMPORT_TASK).catch(console.error);
+      renderSettings();
+    }
+
+    fetchPage(1, null);
+  }
+
+  function cancelImport() {
+    state.importCancelled = true;
+  }
+
+  // ===== Loved Tracks Import =====
+  //
+  // Pulls the user's Last.fm loved tracks (user.getLovedTracks, paginated) and
+  // writes each as a Vibo like via api.library.setTrackLikesBatch. The host
+  // merges newer-wins keyed by the Last.fm "loved" timestamp, so re-running is a
+  // no-op for anything already applied (idempotent). This is the inbound
+  // counterpart to the outbound track.love push in the onLikeChanged handler above.
+
+  function importLovedTracks() {
+    if (!canImportLoved) return;
+    if (state.lovedImporting || !state.sessionKey || !state.username) return;
+    state.lovedImporting = true;
+    state.lovedImportCancelled = false;
+    state.lovedImportProgress = null;
+    state.lovedImportResult = null;
+    renderSettings();
+
+    var username = state.username;
+    var totalApplied = 0;
+    var totalSeen = 0;
+
+    function fetchPage(page, totalPages) {
+      if (state.lovedImportCancelled) {
+        finishLovedImport();
+        return;
+      }
+
+      var params = [
+        ["user", username],
+        ["page", String(page)],
+        ["limit", "200"],
+      ];
+
+      lastfmGet("user.getLovedTracks", params).then(function (data) {
+        var lt = data.lovedtracks;
+        if (!lt || !lt.track) {
+          finishLovedImport();
+          return;
+        }
+
+        var attr = lt["@attr"] || {};
+        var tp = parseInt(attr.totalPages || "1", 10);
+        if (totalPages === null) totalPages = tp;
+
+        var tracks = Array.isArray(lt.track) ? lt.track : [lt.track];
+        var likes = [];
+        for (var i = 0; i < tracks.length; i++) {
+          var t = tracks[i];
+          var artist = (t.artist && (t.artist.name || t.artist["#text"])) || "";
+          var name = t.name || "";
+          if (!artist || !name) continue;
+          // Use the Last.fm "loved" time as the merge timestamp when present so
+          // a recent local like/dislike still wins over an old love.
+          var lovedAt = (t.date && t.date.uts) ? parseInt(t.date.uts, 10) : null;
+          likes.push({ title: name, artistName: artist, liked: 1, updatedAt: lovedAt });
+        }
+        totalSeen += likes.length;
+
+        function next() {
+          if (page < totalPages) {
+            setTimeout(function () { fetchPage(page + 1, totalPages); }, 200);
+          } else {
+            finishLovedImport();
+          }
+        }
+
+        if (likes.length === 0) {
+          state.lovedImportProgress = { page: page, total_pages: totalPages, applied: totalApplied, seen: totalSeen };
+          renderSettings();
+          next();
+          return;
+        }
+
+        return api.library.setTrackLikesBatch(likes).then(function (applied) {
+          totalApplied += (applied || 0);
+          state.lovedImportProgress = {
+            page: page,
+            total_pages: totalPages,
+            applied: totalApplied,
+            seen: totalSeen,
+          };
+          renderSettings();
+          next();
+        });
+      }).catch(function (err) {
+        console.error("[lastfm] loved-tracks import error:", err);
+        state.lovedImporting = false;
+        state.lovedImportProgress = null;
+        renderSettings();
+      });
+    }
+
+    function finishLovedImport() {
+      state.lovedImporting = false;
+      state.lovedImportProgress = null;
+      state.lovedImportResult = { applied: totalApplied, seen: totalSeen };
+      state.lastLovedImportAt = Math.floor(Date.now() / 1000);
+      persistAutoLovedConfig();
+      // Advance the scheduler so the next auto-sync waits a full interval.
+      // Harmless no-op if the task isn't registered (a manual import).
+      api.scheduler.complete(AUTO_LOVED_TASK).catch(console.error);
+      renderSettings();
+    }
+
+    fetchPage(1, null);
+  }
+
+  function cancelLovedImport() {
+    state.lovedImportCancelled = true;
+  }
+
+  // ===== Auto Import =====
+  //
+  // Auto-import is driven by the host scheduler (api.scheduler), NOT a raw
+  // setInterval. The persisted plugin_schedules row survives app restarts and
+  // plugin reloads, and the onDue handler below is auto-cleaned by the host on
+  // deactivate — so reloading the plugin can never orphan a timer / spawn dupes.
+
+  // Fires when the scheduled interval elapses (or ~5s after startup if the task
+  // was just (re)registered with no prior run — giving an automatic catch-up).
+  api.scheduler.onDue(AUTO_IMPORT_TASK, function () {
+    if (!state.sessionKey || state.importing) return;
+    importHistory(state.lastImportAt); // finishImport() calls scheduler.complete()
+  });
+
+  function persistAutoImportConfig() {
+    api.storage.set("lastfm_auto_import", {
+      enabled: state.autoImportEnabled,
+      intervalMins: state.autoImportIntervalMins,
+      lastImportAt: state.lastImportAt,
+    });
+  }
+
+  function startAutoImport() {
+    state.autoImportEnabled = true;
+    api.scheduler
+      .register(AUTO_IMPORT_TASK, state.autoImportIntervalMins * 60 * 1000)
+      .catch(console.error);
+    persistAutoImportConfig();
+  }
+
+  function stopAutoImport() {
+    state.autoImportEnabled = false;
+    api.scheduler.unregister(AUTO_IMPORT_TASK).catch(console.error);
+    persistAutoImportConfig();
+  }
+
+  // Loved-tracks auto-sync — same scheduler-backed model as history above, on a
+  // separate task so the two schedules are independent.
+  api.scheduler.onDue(AUTO_LOVED_TASK, function () {
+    if (!canImportLoved || !state.sessionKey || state.lovedImporting) return;
+    importLovedTracks(); // finishLovedImport() calls scheduler.complete()
+  });
+
+  function persistAutoLovedConfig() {
+    api.storage.set("lastfm_loved_auto", {
+      enabled: state.autoLovedEnabled,
+      intervalMins: state.autoLovedIntervalMins,
+      lastLovedImportAt: state.lastLovedImportAt,
+    });
+  }
+
+  function startAutoLoved() {
+    state.autoLovedEnabled = true;
+    api.scheduler
+      .register(AUTO_LOVED_TASK, state.autoLovedIntervalMins * 60 * 1000)
+      .catch(console.error);
+    persistAutoLovedConfig();
+  }
+
+  function stopAutoLoved() {
+    state.autoLovedEnabled = false;
+    api.scheduler.unregister(AUTO_LOVED_TASK).catch(console.error);
+    persistAutoLovedConfig();
+  }
+
+  // ===== Settings Panel =====
+
+  function formatTimeAgo(ts) {
+    if (!ts) return "Never";
+    var diff = Math.floor(Date.now() / 1000) - ts;
+    if (diff < 60) return "Just now";
+    if (diff < 3600) return Math.floor(diff / 60) + " min ago";
+    if (diff < 86400) return Math.floor(diff / 3600) + " hr ago";
+    return Math.floor(diff / 86400) + " days ago";
+  }
+
+  function renderSettings() {
+    var children = [];
+
+    // Account section
+    var accountRows = [];
+    if (state.sessionKey && state.username) {
+      accountRows.push({
+        type: "settings-row",
+        label: "Connection",
+        description: "Scrobbling as " + state.username,
+        control: { type: "button", label: "Disconnect", action: "lastfm-disconnect" },
+      });
+      accountRows.push({
+        type: "settings-row",
+        label: "Profile",
+        description: "last.fm/user/" + state.username,
+        control: { type: "button", label: "Open", action: "lastfm-open-profile" },
+      });
+    } else {
+      accountRows.push({
+        type: "settings-row",
+        label: "Connection",
+        description: "Connect to scrobble your plays",
+        control: { type: "button", label: "Connect", action: "lastfm-connect", variant: "accent", style: { background: "#d51007", borderColor: "#d51007" } },
+      });
+    }
+    children.push({ type: "section", title: "Account", children: accountRows });
+
+    // History section
+    var historyRows = [];
+
+    if (state.importing && state.importProgress) {
+      historyRows.push({
+        type: "progress-bar",
+        value: state.importProgress.page,
+        max: state.importProgress.total_pages,
+        label: "Page " + state.importProgress.page + " / " + state.importProgress.total_pages
+          + " — " + state.importProgress.imported + " imported, " + state.importProgress.skipped + " skipped",
+      });
+      historyRows.push({ type: "button", label: "Cancel Import", action: "lastfm-cancel-import" });
+    } else if (state.importResult) {
+      historyRows.push({
+        type: "text",
+        content: "<p>Import complete: " + state.importResult.imported + " imported, "
+          + state.importResult.skipped + " skipped</p>",
+      });
+      historyRows.push({ type: "button", label: "Dismiss", action: "lastfm-dismiss-result" });
+    } else {
+      historyRows.push({
+        type: "settings-row",
+        label: "Import scrobble history",
+        description: state.lastImportAt
+          ? "Import new scrobbles since last sync"
+          : "Import your complete listening history from Last.fm",
+        control: { type: "button", label: "Import", action: "lastfm-import", disabled: !state.sessionKey },
+      });
+      if (state.lastImportAt) {
+        historyRows.push({
+          type: "settings-row",
+          label: "Full re-sync",
+          description: "Re-import your entire history from the beginning (duplicates are skipped)",
+          control: { type: "button", label: "Re-sync", action: "lastfm-import-full", disabled: !state.sessionKey },
+        });
+      }
+    }
+
+    historyRows.push({
+      type: "toggle",
+      label: "Auto-import",
+      description: "Periodically import new scrobbles in the background",
+      action: "lastfm-toggle-auto-import",
+      checked: state.autoImportEnabled,
+      disabled: !state.sessionKey,
+    });
+
+    if (state.autoImportEnabled && state.sessionKey) {
+      historyRows.push({
+        type: "select",
+        label: "Import interval",
+        description: "How often to check for new scrobbles",
+        action: "lastfm-set-interval",
+        value: String(state.autoImportIntervalMins),
+        options: [
+          { value: "15", label: "15 minutes" },
+          { value: "30", label: "30 minutes" },
+          { value: "60", label: "1 hour" },
+          { value: "120", label: "2 hours" },
+          { value: "240", label: "4 hours" },
+        ],
+      });
+      historyRows.push({
+        type: "settings-row",
+        label: "Last synced",
+        description: formatTimeAgo(state.lastImportAt),
+        control: { type: "text", content: "" },
+      });
+    }
+    children.push({ type: "section", title: "History", children: historyRows });
+
+    // Loved tracks section (only when the host supports writing likes).
+    if (canImportLoved) {
+      var lovedRows = [];
+      if (state.lovedImporting && state.lovedImportProgress) {
+        var lp = state.lovedImportProgress;
+        lovedRows.push({
+          type: "progress-bar",
+          value: lp.page,
+          max: lp.total_pages,
+          label: "Page " + lp.page + " / " + lp.total_pages + " — " + lp.applied + " added",
+        });
+        lovedRows.push({ type: "button", label: "Cancel", action: "lastfm-cancel-loved-import" });
+      } else if (state.lovedImportResult) {
+        var lr = state.lovedImportResult;
+        lovedRows.push({
+          type: "text",
+          content: "<p>Loved tracks imported: " + lr.applied + " new like" + (lr.applied === 1 ? "" : "s")
+            + " from " + lr.seen + " loved track" + (lr.seen === 1 ? "" : "s") + "</p>",
+        });
+        lovedRows.push({ type: "button", label: "Dismiss", action: "lastfm-dismiss-loved-result" });
+      } else {
+        lovedRows.push({
+          type: "settings-row",
+          label: "Import loved tracks",
+          description: "Add your Last.fm loved tracks as likes in Vibo. Re-run any time — already-liked tracks are skipped.",
+          control: { type: "button", label: "Import", action: "lastfm-import-loved", disabled: !state.sessionKey },
+        });
+      }
+
+      lovedRows.push({
+        type: "toggle",
+        label: "Auto-sync",
+        description: "Periodically import your loved tracks in the background",
+        action: "lastfm-toggle-auto-loved",
+        checked: state.autoLovedEnabled,
+        disabled: !state.sessionKey,
+      });
+
+      if (state.autoLovedEnabled && state.sessionKey) {
+        lovedRows.push({
+          type: "select",
+          label: "Sync interval",
+          description: "How often to check for new loved tracks",
+          action: "lastfm-set-loved-interval",
+          value: String(state.autoLovedIntervalMins),
+          options: [
+            { value: "60", label: "1 hour" },
+            { value: "360", label: "6 hours" },
+            { value: "720", label: "12 hours" },
+            { value: "1440", label: "Daily" },
+            { value: "10080", label: "Weekly" },
+          ],
+        });
+        lovedRows.push({
+          type: "settings-row",
+          label: "Last synced",
+          description: formatTimeAgo(state.lastLovedImportAt),
+          control: { type: "text", content: "" },
+        });
+      }
+      children.push({ type: "section", title: "Loved tracks", children: lovedRows });
+    }
+
+    api.ui.setViewData("lastfm-settings", {
+      type: "layout",
+      direction: "vertical",
+      children: children,
+    });
+  }
+
+  // ===== UI Actions =====
+
+  api.ui.onAction("lastfm-connect", function () {
+    startAuth();
+  });
+
+  api.ui.onAction("lastfm-disconnect", function () {
+    disconnect();
+    renderSettings();
+  });
+
+  api.ui.onAction("lastfm-open-profile", function () {
+    if (state.username) {
+      api.network.openUrl("https://www.last.fm/user/" + state.username);
+    }
+  });
+
+  api.ui.onAction("lastfm-import", function () {
+    importHistory(state.lastImportAt);
+  });
+
+  api.ui.onAction("lastfm-import-full", function () {
+    importHistory(null);
+  });
+
+  api.ui.onAction("lastfm-cancel-import", function () {
+    cancelImport();
+  });
+
+  api.ui.onAction("lastfm-dismiss-result", function () {
+    state.importResult = null;
+    renderSettings();
+  });
+
+  api.ui.onAction("lastfm-import-loved", function () {
+    importLovedTracks();
+  });
+
+  api.ui.onAction("lastfm-cancel-loved-import", function () {
+    cancelLovedImport();
+  });
+
+  api.ui.onAction("lastfm-dismiss-loved-result", function () {
+    state.lovedImportResult = null;
+    renderSettings();
+  });
+
+  api.ui.onAction("lastfm-toggle-auto-loved", function (data) {
+    if (data && data.value) {
+      startAutoLoved();
+    } else {
+      stopAutoLoved();
+    }
+    renderSettings();
+  });
+
+  api.ui.onAction("lastfm-set-loved-interval", function (data) {
+    if (data && data.value) {
+      state.autoLovedIntervalMins = parseInt(data.value, 10) || 1440;
+      if (state.autoLovedEnabled) {
+        // Re-register updates interval_ms in place (upsert) — no stop/start needed.
+        api.scheduler
+          .register(AUTO_LOVED_TASK, state.autoLovedIntervalMins * 60 * 1000)
+          .catch(console.error);
+      }
+      persistAutoLovedConfig();
+      renderSettings();
+    }
+  });
+
+  api.ui.onAction("lastfm-toggle-auto-import", function (data) {
+    if (data && data.value) {
+      startAutoImport();
+    } else {
+      stopAutoImport();
+    }
+    renderSettings();
+  });
+
+  api.ui.onAction("lastfm-set-interval", function (data) {
+    if (data && data.value) {
+      state.autoImportIntervalMins = parseInt(data.value, 10) || 60;
+      if (state.autoImportEnabled) {
+        // Re-register updates interval_ms in place (upsert) — no stop/start needed.
+        api.scheduler
+          .register(AUTO_IMPORT_TASK, state.autoImportIntervalMins * 60 * 1000)
+          .catch(console.error);
+      }
+      persistAutoImportConfig();
+      renderSettings();
+    }
+  });
+
+  // ===== Initialize =====
+
+  // Load API credentials from backend
+  Promise.all([
+    api.env.get("LASTFM_API_KEY"),
+    api.env.get("LASTFM_API_SECRET"),
+  ]).then(function (creds) {
+    state.apiKey = creds[0];
+    state.apiSecret = creds[1];
+    _resolveApiKeyReady();
+
+    // Restore session
+    return api.storage.get("lastfm_session");
+  }).then(function (session) {
+    if (session && session.sessionKey && session.username) {
+      state.sessionKey = session.sessionKey;
+      state.username = session.username;
+    }
+
+    // Restore auto-import settings
+    return api.storage.get("lastfm_auto_import");
+  }).then(function (config) {
+    if (config) {
+      state.autoImportIntervalMins = config.intervalMins || 60;
+      state.lastImportAt = config.lastImportAt || null;
+      if (config.enabled && state.sessionKey) {
+        // Re-register (idempotent upsert) and re-attach is handled by onDue above;
+        // a due/never-run task fires a catch-up import ~5s after startup.
+        startAutoImport();
+      } else {
+        // Clear any stale persisted schedule so a disabled toggle never fires.
+        api.scheduler.unregister(AUTO_IMPORT_TASK).catch(console.error);
+      }
+    }
+
+    // Restore loved-tracks auto-sync settings
+    return api.storage.get("lastfm_loved_auto");
+  }).then(function (lovedConfig) {
+    if (lovedConfig) {
+      state.autoLovedIntervalMins = lovedConfig.intervalMins || 1440;
+      state.lastLovedImportAt = lovedConfig.lastLovedImportAt || null;
+      if (lovedConfig.enabled && state.sessionKey && canImportLoved) {
+        startAutoLoved();
+      } else {
+        // Clear any stale persisted schedule so a disabled toggle never fires.
+        api.scheduler.unregister(AUTO_LOVED_TASK).catch(console.error);
+      }
+    }
+    renderSettings();
+  }).catch(function (err) {
+    console.error("[lastfm] init error:", err);
+    _resolveApiKeyReady(); // Unblock handlers — they'll fail gracefully via lastfmGet guard
+    renderSettings();
+  });
+}
+
+function deactivate() {
+  // The auto-import onDue handler is registered via api.scheduler.onDue, so the
+  // host clears it automatically on deactivate. The persisted plugin_schedules
+  // row is intentionally left in place so auto-import survives reloads/restarts.
+}
+
+return { activate: activate, deactivate: deactivate };
