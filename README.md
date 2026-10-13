@@ -29,9 +29,11 @@ the Listeners item). Its source lives here, not in the app repo.
 
 - The app ships a **pinned copy of a release from this repo**, files unchanged:
   `src-tauri/plugins/lastfm/` holds the release's `manifest.json`, `index.js` and
-  `signature.sig`, recorded in `src-tauri/plugins/lastfm.lock.json` (version +
-  sha256 of each file) and refreshed by `node scripts/sync-lastfm-plugin.mjs` in
-  the app repo. **Never edit that copy** — change it here and release.
+  `signature.sig`, recorded in `scripts/bundled-plugins.lock.json` (version +
+  sha256 of each file) and refreshed by `node scripts/sync-bundled-plugins.mjs lastfm`
+  in the app repo. **Never edit that copy** — change it here and release. The
+  app's `src/__tests__/bundledPlugins.test.ts` fails on any byte that differs
+  from the release, or a signature that doesn't verify.
 - The manifest carries `updateUrl`, so the bundled copy is checked for updates.
   Installing one puts the new version in the user's plugins folder, which takes
   precedence over the bundled copy by id. Sign-in and settings are keyed by the
