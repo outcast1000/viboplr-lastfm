@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.7.1
+- Requests to Last.fm now identify themselves as `Vibo` instead of using the
+  app's browser-style default. Some company networks (Zscaler) block that
+  default from a non-browser client, which left bios, popularity, similar
+  artists and scrobbling failing with HTTP 403.
+
 ## v1.7.0
 - **Now lives in its own repository** (`outcast1000/viboplr-lastfm`) and declares
   an `updateUrl`, so fixes reach you through Extensions → updates without waiting
