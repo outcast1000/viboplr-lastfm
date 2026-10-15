@@ -16,6 +16,11 @@ Plugin id: `lastfm`. Runs in Vibo's worker runtime.
 - **Information types:** `artist_bio`, `artist_stats`, `artist_top_tracks`,
   `similar_artists`, `album_wiki`, `album_track_popularity`, `track_info`,
   `track_tags`, `similar_tracks`.
+- **Search provider** `lastfm`: a "Search “x” on Last.fm" row in Vibo's search
+  (Cmd+K). Picking it runs `artist.search`, `album.search` and `track.search`;
+  artists and albums open Vibo's own pages by name, tracks play through the
+  stream resolvers (Last.fm has no audio). Hosts without artist/album support
+  show the tracks only.
 - **Now Playing info item** `scrobbles` ("Listeners"), the **"Play the Full
   Album"** track action, a **Settings panel** (connect, import, schedules), and
   three read-only **assistant tools**: `account_status`, `recent_scrobbles`,

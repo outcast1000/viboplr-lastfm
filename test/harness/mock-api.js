@@ -11,6 +11,7 @@ function makeMockApi(opts) {
     uiActions: {},
     menuActions: {},
     nowPlaying: {},
+    search: {},
     scheduler: {},
     scrobbled: null,
     started: null,
@@ -74,6 +75,9 @@ function makeMockApi(opts) {
     nowPlayingInfo: {
       registerItem: function (item) { nowPlayingItems.push(item); return function () {}; },
       onFetch: function (id, h) { handlers.nowPlaying[id] = h; return function () {}; },
+    },
+    search: {
+      onQuery: function (id, h) { handlers.search[id] = h; return function () {}; },
     },
     contextMenu: {
       onAction: function (id, h) { handlers.menuActions[id] = h; return function () {}; },
