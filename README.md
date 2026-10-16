@@ -21,6 +21,16 @@ Plugin id: `lastfm`. Runs in Vibo's worker runtime.
   artists and albums open Vibo's own pages by name, tracks play through the
   stream resolvers (Last.fm has no audio). Hosts without artist/album support
   show the tracks only.
+- **Discovery** for music you don't own: a **"Start radio"** action on tracks
+  and artists (`playWithBackfill`: the seed plays at once, `track.getSimilar`
+  or similar artists' top tracks fill in behind it), and a **"From Last.fm"
+  Home shelf** (`lastfm-mixes`) of mixes seeded from local history (or, signed
+  in with none yet, the Last.fm account's) — similar songs, artist mixes
+  (`partial` cards resolved on play), tag mixes; with nothing to seed from,
+  Trending plus two of `chart.getTopTags`. Mix lookups are memoized in memory
+  only, never written to plugin storage. Both are offered only while a plugin stream resolver is running
+  (`api.plugins.list()`, permission `plugins:call`): every track is
+  metadata-only.
 - **Now Playing info item** `scrobbles` ("Listeners"), the **"Play the Full
   Album"** track action, a **Settings panel** (connect, import, schedules), and
   three read-only **assistant tools**: `account_status`, `recent_scrobbles`,

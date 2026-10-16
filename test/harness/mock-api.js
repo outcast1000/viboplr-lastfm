@@ -12,6 +12,8 @@ function makeMockApi(opts) {
     menuActions: {},
     nowPlaying: {},
     search: {},
+    shelves: {},
+    resolvePlay: {},
     scheduler: {},
     scrobbled: null,
     started: null,
@@ -22,6 +24,10 @@ function makeMockApi(opts) {
   const posts = [];
   const nowPlayingItems = [];
   const viewData = {};
+  const notifications = [];
+  const backfills = [];
+  const played = [];
+  const storageWrites = [];
 
   const ok = function () { return Promise.resolve(null); };
 
@@ -31,6 +37,10 @@ function makeMockApi(opts) {
     posts,
     nowPlayingItems,
     viewData,
+    notifications,
+    backfills,
+    played,
+    storageWrites,
     appVersion: "9.9.9",
     log: function () {},
     env: {
@@ -41,7 +51,7 @@ function makeMockApi(opts) {
         if (key === "lastfm_session") return Promise.resolve(opts.session || null);
         return Promise.resolve(null);
       },
-      set: ok,
+      set: function (key) { storageWrites.push(key); return Promise.resolve(null); },
       delete: ok,
     },
     network: {
@@ -62,10 +72,38 @@ function makeMockApi(opts) {
     playback: {
       onTrackStarted: function (h) { handlers.started = h; return function () {}; },
       onTrackScrobbled: function (h) { handlers.scrobbled = h; return function () {}; },
-      playTracks: ok,
+      playTracks: function (tracks, startIndex, context) {
+        played.push({ tracks: tracks, startIndex: startIndex, context: context });
+        return Promise.resolve();
+      },
+      // Records the request; tests await `backfills[n].tail` for what landed.
+      playWithBackfill: function (req) {
+        const entry = { head: req.head, context: req.context, tailErrorMessage: req.tailErrorMessage };
+        entry.tail = req.resolveTail();
+        backfills.push(entry);
+        return entry.tail.then(function (t) { return t.length; });
+      },
+    },
+    // opts.plugins — what plugins.list() answers (default: yt-dlp, a running
+    // stream resolver).
+    plugins: {
+      list: function () {
+        return opts.plugins || [{ id: "ytdlp", enabled: true, status: "active", capabilities: { streamResolvers: 1 } }];
+      },
+    },
+    home: {
+      onFetchShelf: function (id, h) { handlers.shelves[id] = h; return function () {}; },
+      onResolvePlay: function (id, h) { handlers.resolvePlay[id] = h; return function () {}; },
     },
     library: {
       onLikeChanged: function (h) { handlers.likeChanged = h; return function () {}; },
+      getHistory: function () { return Promise.resolve(opts.history || []); },
+      getMostPlayedArtists: function () { return Promise.resolve(opts.topArtists || []); },
+      // opts.disliked — "title|artist" strings answered as -1.
+      getTrackLikeStates: function (tracks) {
+        const bad = opts.disliked || [];
+        return Promise.resolve(tracks.map(function (t) { return bad.indexOf(t.title + "|" + t.artistName) !== -1 ? -1 : 0; }));
+      },
       recordHistoryPlaysBatch: function () { return Promise.resolve({ imported: 0, skipped: 0 }); },
       setTrackLikesBatch: function () { return Promise.resolve(0); },
     },
@@ -94,7 +132,7 @@ function makeMockApi(opts) {
     ui: {
       onAction: function (id, h) { handlers.uiActions[id] = h; return function () {}; },
       setViewData: function (id, data) { viewData[id] = data; },
-      showNotification: function () {},
+      showNotification: function (message, options) { notifications.push({ message: message, kind: options && options.kind }); },
     },
   };
   return api;
