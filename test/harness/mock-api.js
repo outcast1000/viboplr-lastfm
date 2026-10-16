@@ -47,8 +47,10 @@ function makeMockApi(opts) {
       get: function () { return Promise.resolve("test-key"); },
     },
     storage: {
+      // opts.stored — plugin-storage values by key (e.g. a tab's cached response).
       get: function (key) {
         if (key === "lastfm_session") return Promise.resolve(opts.session || null);
+        if (opts.stored && key in opts.stored) return Promise.resolve(opts.stored[key]);
         return Promise.resolve(null);
       },
       set: function (key) { storageWrites.push(key); return Promise.resolve(null); },
@@ -72,6 +74,7 @@ function makeMockApi(opts) {
     playback: {
       onTrackStarted: function (h) { handlers.started = h; return function () {}; },
       onTrackScrobbled: function (h) { handlers.scrobbled = h; return function () {}; },
+      onAutoContinue: function (h) { handlers.autoContinue = h; return function () {}; },
       playTracks: function (tracks, startIndex, context) {
         played.push({ tracks: tracks, startIndex: startIndex, context: context });
         return Promise.resolve();

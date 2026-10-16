@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.10.0
+- **Auto-continue keeps going without a library.** With auto-continue on (∞ in
+  the queue header), when your library has nothing to play next — no library
+  at all, or nothing of the format "Same format" asks for — Last.fm suggests a
+  song similar to the one playing, skipping what you just heard and songs you
+  disliked. Now and then it steers back toward the song you started with, so a
+  long session doesn't wander off.
+- With a library, you can also mix Last.fm suggestions in: Settings → Playback
+  → Auto-continue → **Similar · Last.fm** (0% by default).
+- Needs a Vibo version with plugin auto-continue, and a source that can play
+  songs you don't own (yt-dlp, Soulseek, TIDAL…). On older versions nothing
+  changes.
+- Radio and mixes: a song with only a few similar songs keeps them, topped up
+  with its artist's; songs you disliked no longer crowd their artist out of a
+  mix; a signed-in user who never tagged anything still gets genre mixes; the
+  Home shelf loads faster; and radio no longer saves a copy of every artist it
+  looked up.
+
 ## v1.9.0
 - **Last.fm radio.** Right-click a song or an artist → Last.fm → **Start
   radio**: the song (or the artist's best-known one) plays at once and the

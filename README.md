@@ -28,9 +28,15 @@ Plugin id: `lastfm`. Runs in Vibo's worker runtime.
   in with none yet, the Last.fm account's) — similar songs, artist mixes
   (`partial` cards resolved on play), tag mixes; with nothing to seed from,
   Trending plus two of `chart.getTopTags`. Mix lookups are memoized in memory
-  only, never written to plugin storage. Both are offered only while a plugin stream resolver is running
+  only and never written to plugin storage; top tracks and similar artists
+  reuse the Top Songs / Similar Artists tabs' stored responses when present. Both are offered only while a plugin stream resolver is running
   (`api.plugins.list()`, permission `plugins:call`): every track is
   metadata-only.
+- **Auto-continue provider** (`api.playback.onAutoContinue`, declared as
+  `contributes.autoContinue`): similar songs to the current track (one pick in
+  four seeded from the session's first track, against drift), the artist's mix
+  for an unknown song; null for a video-only queue or with no playback source.
+  Feature-detected, so older hosts simply never ask.
 - **Now Playing info item** `scrobbles` ("Listeners"), the **"Play the Full
   Album"** track action, a **Settings panel** (connect, import, schedules), and
   three read-only **assistant tools**: `account_status`, `recent_scrobbles`,
