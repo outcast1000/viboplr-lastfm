@@ -30,6 +30,8 @@ function makeMockApi(opts) {
   const storageWrites = [];
 
   const ok = function () { return Promise.resolve(null); };
+  // What the plugin wrote, read back by later gets (opts.stored seeds it).
+  const stored = Object.assign({}, opts.stored);
 
   const api = {
     handlers,
@@ -50,10 +52,10 @@ function makeMockApi(opts) {
       // opts.stored — plugin-storage values by key (e.g. a tab's cached response).
       get: function (key) {
         if (key === "lastfm_session") return Promise.resolve(opts.session || null);
-        if (opts.stored && key in opts.stored) return Promise.resolve(opts.stored[key]);
+        if (key in stored) return Promise.resolve(stored[key]);
         return Promise.resolve(null);
       },
-      set: function (key) { storageWrites.push(key); return Promise.resolve(null); },
+      set: function (key, value) { storageWrites.push(key); stored[key] = value; return Promise.resolve(null); },
       delete: ok,
     },
     network: {
@@ -102,6 +104,7 @@ function makeMockApi(opts) {
       onLikeChanged: function (h) { handlers.likeChanged = h; return function () {}; },
       getHistory: function () { return Promise.resolve(opts.history || []); },
       getMostPlayedArtists: function () { return Promise.resolve(opts.topArtists || []); },
+      getMostPlayed: function () { return Promise.resolve(opts.mostPlayed || []); },
       // opts.disliked — "title|artist" strings answered as -1.
       getTrackLikeStates: function (tracks) {
         const bad = opts.disliked || [];

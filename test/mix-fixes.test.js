@@ -77,9 +77,8 @@ test("disliked songs don't use up their artist's place in a mix", async () => {
       "tag.getTopTracks": { tracks: { track: list } },
     }),
   });
-  const result = await api.handlers.shelves["lastfm-mixes"](10);
-  const rock = result.items.find((i) => i.name === "Rock mix");
-  assert.deepEqual(rock.tracks.filter((t) => t.artist_name === "A").map((t) => t.title).sort(), ["A4", "A5"]);
+  const rock = await api.handlers.resolvePlay["lastfm-mixes"]({ id: "tag:rock", name: "Rock mix", tracks: [] });
+  assert.deepEqual(rock.filter((t) => t.artist_name === "A").map((t) => t.title).sort(), ["A4", "A5"]);
 });
 
 test("a short similar list is kept, first, and topped up with the artist's mix", async () => {

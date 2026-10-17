@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.11.0
+- **"From Last.fm" on Home always has at least six mixes.** Popular genres fill
+  in when your history doesn't give enough, so a new install or a quiet week
+  no longer leaves you with two cards.
+- **Mixes fill when you play them.** Song and artist mixes start at once with a
+  song from your own history, and the rest follows while it plays. Genre and
+  Trending mixes keep their last list, so they start at once too after the
+  first day. Building the shelf barely touches Last.fm, so a slow network no
+  longer makes the whole shelf disappear.
+- More personal mixes: up to three "Similar to" and three "& similar" cards.
+- A genre too small for a mix is skipped and the next one is used.
+- Mixes and radio are now 30 songs long (was 50).
+
 ## v1.10.0
 - **Auto-continue keeps going without a library.** With auto-continue on (∞ in
   the queue header), when your library has nothing to play next — no library

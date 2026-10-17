@@ -117,7 +117,7 @@ test("the Home shelf is empty when no source can play unowned songs", async () =
   assert.deepEqual(await api.handlers.shelves["lastfm-mixes"](10), { status: "empty" });
 });
 
-test("the Home shelf builds mixes from history: similar songs, an artist mix, tag mixes", async () => {
+test("the Home shelf builds on-demand mixes from history, topped up to six", async () => {
   const api = await activated({
     history: [
       { display_title: "Teardrop", display_artist: "Massive Attack" },
@@ -136,13 +136,40 @@ test("the Home shelf builds mixes from history: similar songs, an artist mix, ta
   assert.equal(result.status, "ok");
   const names = result.items.map((i) => i.name);
   // One similar mix per distinct recent artist; Portishead is already a track
-  // seed, so the artist mix is Björk's; "seen live" is not a genre.
-  assert.deepEqual(names, ["Similar to Teardrop", "Similar to Roads", "Björk & similar", "Trip-hop mix", "Electronic mix"]);
+  // seed, so the artist mix is Björk's; "seen live" is not a genre; Trending
+  // makes six.
+  assert.deepEqual(names, ["Similar to Teardrop", "Similar to Roads", "Björk & similar", "Trip-hop mix", "Electronic mix", "Trending on Last.fm"]);
+  // Song cards open with the seed itself and nothing else.
+  assert.equal(result.items[0].partial, true);
+  assert.deepEqual(result.items[0].tracks, [{ title: "Teardrop", artist_name: "Massive Attack", album_title: undefined }]);
+  assert.ok(!methodsCalled(api).includes("track.getSimilar"), "similar songs are looked up on play, not here");
+  // Björk has no song in the history, so her card opens with her top song.
   const artistMix = result.items[2];
   assert.equal(artistMix.partial, true);
   assert.deepEqual(artistMix.tracks.map((t) => t.title), ["Song 1"]);
-  assert.ok(result.items[0].tracks.length >= 8);
+  // Genre cards have no kept list yet: no tracks, resolved on play.
+  assert.deepEqual(result.items[3].tracks, []);
   for (const item of result.items) assert.doesNotMatch(item.id, /\u0000/);
+
+  // The genre lists are rebuilt after the fetch and shipped by the next one.
+  await settle();
+  const again = await api.handlers.shelves["lastfm-mixes"](10);
+  const tripHop = again.items.find((i) => i.name === "Trip-hop mix");
+  assert.equal(tripHop.tracks.length, 12);
+  assert.match(tripHop.subtitle, /trip-hop artist/);
+});
+
+test("a song card resolves to its similar songs, opening with the seed it shipped", async () => {
+  const api = await activated({
+    fetch: lastfm({
+      "track.getSimilar": { similartracks: { track: tracks("Like", 3).concat(tracks("More", 3), tracks("Also", 3), [{ name: "Teardrop", artist: { name: "Massive Attack" } }]) } },
+    }),
+  });
+  const head = { title: "Teardrop", artist_name: "Massive Attack" };
+  const list = await api.handlers.resolvePlay["lastfm-mixes"]({ id: "similar:Massive%20Attack|Teardrop", tracks: [head], partial: true });
+  assert.deepEqual(list[0], head);
+  assert.equal(list.filter((t) => t.title === "Teardrop").length, 1, "the seed isn't repeated");
+  assert.equal(list.length, 10);
 });
 
 test("an artist card resolves to its full mix, opening with the head it shipped", async () => {
@@ -163,7 +190,7 @@ const notFound = (what) => ({ error: 6, message: `${what} not found` });
 const tagTracks = (p) => ({ tracks: { track: Array.from({ length: 12 }, (_, i) => ({ name: `T${i}`, artist: { name: `${p.get("tag")} artist ${i}` } })) } });
 const chart = { tracks: { track: Array.from({ length: 20 }, (_, i) => ({ name: `Hit ${i}`, artist: { name: `Star ${i}` } })) } };
 
-test("a brand-new profile gets Trending plus a couple of popular genres", async () => {
+test("a brand-new profile gets Trending and genres, six cards in all", async () => {
   const api = await activated({
     fetch: lastfm({
       "chart.getTopTracks": chart,
@@ -175,8 +202,13 @@ test("a brand-new profile gets Trending plus a couple of popular genres", async 
   assert.equal(result.status, "ok");
   const names = result.items.map((i) => i.name);
   assert.equal(names[0], "Trending on Last.fm");
-  assert.deepEqual(names.slice(1).sort(), ["Jazz mix", "Rock mix"]);
-  assert.equal(result.items[0].tracks.length, 20);
+  assert.equal(names.length, 6);
+  assert.ok(names.includes("Rock mix") && names.includes("Jazz mix"));
+  // First fetch: Trending resolves on play. Next fetch ships its list.
+  assert.deepEqual(result.items[0].tracks, []);
+  await settle();
+  const again = await api.handlers.shelves["lastfm-mixes"](10);
+  assert.equal(again.items[0].tracks.length, 20);
 });
 
 test("signed in with no local history, mixes come from the Last.fm account", async () => {
@@ -192,8 +224,9 @@ test("signed in with no local history, mixes come from the Last.fm account", asy
     }),
   });
   const result = await api.handlers.shelves["lastfm-mixes"](10);
-  assert.deepEqual(result.items.map((i) => i.name), ["Similar to Hyperballad", "Portishead & similar", "Trip-hop mix"]);
-  assert.ok(!methodsCalled(api).includes("chart.getTopTracks"), "has history, so no Trending");
+  const names = result.items.map((i) => i.name);
+  assert.deepEqual(names.slice(0, 4), ["Similar to Hyperballad", "Portishead & similar", "Trip-hop mix", "Trending on Last.fm"]);
+  assert.equal(names.length, 6, "popular genres fill the rest");
 });
 
 test("a song Last.fm doesn't know still gets a radio, from its artist", async () => {
