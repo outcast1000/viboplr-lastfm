@@ -1,7 +1,7 @@
 {
   "id": "lastfm",
   "name": "Last.fm",
-  "version": "1.11.1",
+  "version": "1.11.2",
   "author": "Vibo",
   "description": "Scrobbling, now playing, history import, and metadata from Last.fm",
   "icon": "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9z",
@@ -39,13 +39,13 @@
           "name": "account_status",
           "readOnly": true,
           "description": "Whether Last.fm is connected, and as which username",
-          "categories": ["library"]
+          "categories": ["info"]
         },
         {
           "name": "recent_scrobbles",
           "readOnly": true,
           "description": "The user's latest scrobbles from their Last.fm account — includes plays from OTHER devices/apps, unlike the local history",
-          "categories": ["library"],
+          "categories": ["info"],
           "inputSchema": {
             "type": "object",
             "properties": {
@@ -60,7 +60,7 @@
           "name": "top_charts",
           "readOnly": true,
           "description": "The user's personal Last.fm charts (account-wide, cross-device)",
-          "categories": ["library"],
+          "categories": ["info"],
           "inputSchema": {
             "type": "object",
             "properties": {

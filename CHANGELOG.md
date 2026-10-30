@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.11.2
+- The AI tools (account_status, recent_scrobbles, top_charts) are now filed under "info" rather than "library": they read your Last.fm account, not your music library, so an in-app assistant asked about the library no longer gets them.
+
 ## v1.11.1
 - Each AI tool now says what it is about (its category), so Viboplr's in-app assistant can offer it alongside the app's own tools of the same kind instead of sending every tool at once. Viboplr versions that don't know the field ignore it.
 - The AI notes now name the app's get_entity_info tool instead of an HTTP route an in-app assistant can't call.
