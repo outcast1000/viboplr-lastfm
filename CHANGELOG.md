@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.11.1
+- Each AI tool now says what it is about (its category), so Viboplr's in-app assistant can offer it alongside the app's own tools of the same kind instead of sending every tool at once. Viboplr versions that don't know the field ignore it.
+- The AI notes now name the app's get_entity_info tool instead of an HTTP route an in-app assistant can't call.
+
 ## v1.11.0
 - **"From Last.fm" on Home always has at least six mixes.** Popular genres fill
   in when your history doesn't give enough, so a new install or a quiet week
