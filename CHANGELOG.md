@@ -1,5 +1,9 @@
 # Changelog
 
+## v1.11.3
+- The Now Playing info item is now **Plays (Last.fm)** and reads "100k plays on Last.fm" — the song's all-time Last.fm play count — instead of "listeners · plays / listener", worded like the Spotify plugin's "Plays (Spotify)" so the two read alike. Your on/off and position for it are kept. A song's listeners stay on its page's Last.fm stats line.
+
+
 ## v1.11.2
 - The AI tools (account_status, recent_scrobbles, top_charts) are now filed under "info" rather than "library": they read your Last.fm account, not your music library, so an in-app assistant asked about the library no longer gets them.
 

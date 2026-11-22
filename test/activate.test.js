@@ -33,13 +33,32 @@ test("every manifest context-menu item has an action handler", async () => {
   }
 });
 
-test("it is a scrobbler and registers the Listeners now-playing item", async () => {
+test("it is a scrobbler and registers the Plays now-playing item", async () => {
   const api = await activated();
   assert.equal(typeof api.handlers.scrobbled, "function");
   assert.equal(typeof api.handlers.started, "function");
   // The id stays "scrobbles": persisted selection/order in the host key on it.
   assert.deepEqual(api.nowPlayingItems.map((i) => i.id), ["scrobbles"]);
+  assert.equal(api.nowPlayingItems[0].label, "Plays (Last.fm)");
   assert.equal(typeof api.handlers.nowPlaying.scrobbles, "function");
+});
+
+test("the Plays now-playing item reads \"100k plays on Last.fm\", like Spotify's", async () => {
+  const answer = (track) => (url) => {
+    const method = new URL(url).searchParams.get("method");
+    const body = method === "track.getInfo" ? { track } : {};
+    return Promise.resolve({ status: 200, headers: {}, json: () => Promise.resolve(body), text: () => Promise.resolve(JSON.stringify(body)) });
+  };
+  const ask = async (track) => {
+    const api = makeMockApi({ fetch: answer(track) });
+    loadPlugin().activate(api);
+    await settle();
+    return api.handlers.nowPlaying.scrobbles({ title: "Romeo", artist_name: "Wipers" });
+  };
+  assert.deepEqual(await ask({ playcount: "100234", listeners: "20000" }), { status: "ok", text: "100k plays on Last.fm" });
+  assert.deepEqual(await ask({ playcount: "4210000", listeners: "1" }), { status: "ok", text: "4.2M plays on Last.fm" });
+  // No count: the item is skipped for the song, never "0 plays".
+  assert.deepEqual(await ask({ playcount: "0", listeners: "0" }), { status: "empty" });
 });
 
 test("a signed-out scrobble is skipped with a message, without a network call", async () => {

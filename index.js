@@ -489,32 +489,28 @@ function activate(api) {
   }
 
   // ===== Now Playing Info =====
-  // Contributes a single "Listeners" item to the cycling now-playing section:
-  // the track's Last.fm listener count plus the plays-per-listener average.
-  // The raw playcount is deliberately not shown — the average carries it, and
-  // the app names Last.fm playcounts "plays" everywhere, never "scrobbles"
-  // ("scrobbling" stays the name of the act only).
+  // Contributes a single "Plays (Last.fm)" item to the cycling now-playing
+  // section: the track's all-time Last.fm play count, "100k plays on Last.fm" —
+  // worded like the Spotify plugin's "Plays (Spotify)" ("62.5M plays on
+  // Spotify"), so the two read as one family. Listeners and the plays-per-
+  // listener average stay on the track page's stats line. The app names
+  // Last.fm playcounts "plays" everywhere, never "scrobbles" ("scrobbling"
+  // stays the name of the act only).
   // Reads from the same cached track.getInfo response the track detail page
   // uses, so the numbers match exactly between the two surfaces.
   // The item id stays "scrobbles": users' persisted selection/order key on it.
-  api.nowPlayingInfo.registerItem({ id: "scrobbles", label: "Listeners (Last.fm)", priority: 100, defaultEnabled: true });
+  api.nowPlayingInfo.registerItem({ id: "scrobbles", label: "Plays (Last.fm)", priority: 100, defaultEnabled: true });
   api.nowPlayingInfo.onFetch("scrobbles", function (track) {
     var artistName = track && track.artist_name;
     var title = track && track.title;
     if (!artistName || !title) return Promise.resolve({ status: "empty" });
     return fetchTrackInfo(artistName, title).then(function (data) {
       if (!data || !data.track) return { status: "empty" };
-      var t = data.track;
-      var parts = [];
-      var plays = Number(t.playcount || 0);
-      var listeners = Number(t.listeners || 0);
-      if (listeners > 0) parts.push(compactCount(listeners) + " listeners");
-      var avg = perListener(plays, listeners);
-      if (avg) parts.push(avg + " plays / listener");
-      if (parts.length === 0) return { status: "empty" };
-      return { status: "ok", text: parts.join(" · ") };
+      var plays = Number(data.track.playcount || 0);
+      if (!(plays > 0)) return { status: "empty" };
+      return { status: "ok", text: compactCount(plays) + " plays on Last.fm" };
     }).catch(function (err) {
-      console.error("[lastfm] now-playing listeners error:", err && err.message);
+      console.error("[lastfm] now-playing plays error:", err && err.message);
       return { status: "error" };
     });
   });
