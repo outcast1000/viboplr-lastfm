@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.11.4
+- **Start radio** and **Play the Full Album** now say which shared action they are, so Viboplr groups them with its own and other plugins' versions in one menu row ("Start radio ▸ Library / Last.fm / Spotify") instead of listing them side by side. Older Viboplr versions show the menu as before.
+
 ## v1.11.3
 - The Now Playing info item is now **Plays (Last.fm)** and reads "100k plays on Last.fm" — the song's all-time Last.fm play count — instead of "listeners · plays / listener", worded like the Spotify plugin's "Plays (Spotify)" so the two read alike. Your on/off and position for it are kept. A song's listeners stay on its page's Last.fm stats line.
 
