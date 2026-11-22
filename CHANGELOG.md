@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.11.5
+- An artist's Last.fm **Stats** (listeners and plays) are refreshed weekly instead of every 90 days, like the song stats and top songs already were. Bios, reviews and similar artists keep their 90 days.
+
 ## v1.11.4
 - **Start radio** and **Play the Full Album** now say which shared action they are, so Viboplr groups them with its own and other plugins' versions in one menu row ("Start radio ▸ Library / Last.fm / Spotify") instead of listing them side by side. Older Viboplr versions show the menu as before.
 
