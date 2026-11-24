@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.11.6
+- The **Plays (Last.fm)** Now Playing item says it is a play count (`kind: "stat"`), so Viboplr styles it from that instead of by its id. Nothing changes on screen.
+
 ## v1.11.5
 - An artist's Last.fm **Stats** (listeners and plays) are refreshed weekly instead of every 90 days, like the song stats and top songs already were. Bios, reviews and similar artists keep their 90 days.
 

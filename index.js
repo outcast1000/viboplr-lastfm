@@ -499,7 +499,9 @@ function activate(api) {
   // Reads from the same cached track.getInfo response the track detail page
   // uses, so the numbers match exactly between the two surfaces.
   // The item id stays "scrobbles": users' persisted selection/order key on it.
-  api.nowPlayingInfo.registerItem({ id: "scrobbles", label: "Plays (Last.fm)", priority: 100, defaultEnabled: true });
+  // kind "stat": the host styles it like its other play counts (and Spotify's).
+  // Older hosts ignore the field, and style this item by its id anyway.
+  api.nowPlayingInfo.registerItem({ id: "scrobbles", label: "Plays (Last.fm)", priority: 100, defaultEnabled: true, kind: "stat" });
   api.nowPlayingInfo.onFetch("scrobbles", function (track) {
     var artistName = track && track.artist_name;
     var title = track && track.title;
